@@ -2,7 +2,9 @@ package com.maststudios.rectangle;
 
 import android.content.Context;
 import android.graphics.Canvas;
+import android.graphics.Matrix;
 import android.graphics.Paint;
+import android.graphics.Paint.Style;
 import android.support.v4.view.GestureDetectorCompat;
 import android.view.GestureDetector;
 import android.view.MotionEvent;
@@ -11,7 +13,7 @@ import android.view.SurfaceView;
 
 //TODO make a class that converts array dimensions to display dimensions
 
-public class Board extends SurfaceView implements GestureDetector.OnGestureListener, SurfaceHolder.Callback {
+public class Board extends SurfaceView implements GestureDetector.OnGestureListener, SurfaceHolder.Callback, Runnable {
 
 	/**
 	 * variables related to the game
@@ -29,37 +31,50 @@ public class Board extends SurfaceView implements GestureDetector.OnGestureListe
 	public Boolean[][] grid;
 	private Rectangle rectangle;
 	private Rectangle goal;
-	private boolean animating;
 	private int gridHeight, gridWidth;
 	private GestureDetectorCompat mDetector;
 	private SurfaceHolder surfaceHolder;
-	private int screenWidth,screenHeight;
+	private int screenwidth, screenheight;
+	private float paddingPercentage;
+
+	// grid drawing dimension attributes
+	float dotRadius, vdis, hdis, top, left, hpad, vpad, strokeWidth;
+	Matrix matrix;
 
 	public Board(Context context) {
 		super(context);
 
-		//set surfaceholder callback
+		// set surfaceholder callback
 		getHolder().addCallback(this);
-		
+
+		// setting display attributes.
+		// these should be set from the level file
+		paddingPercentage = 10;
+		//dotradius and linewidth should be dependent on screenresolution
+		dotRadius = 10;
+		strokeWidth=7;
+		matrix = new Matrix();
+
 		mDetector = new GestureDetectorCompat(context, this);
 
 		gridHeight = 6;
 		gridWidth = 6;
 
 		// setting the goal rectangle
-
-		goal = new Rectangle();
-		goal.setTop(4);
-		goal.setBottom(5);
-		goal.setLeft(4);
-		goal.setRight(5);
+		Paint goalPaint = new Paint();
+		// TODO adhoc - this color should be set by the level file
+		goalPaint.setColor(getResources().getColor(R.color.green));
+		goalPaint.setStyle(Style.STROKE);
+		goalPaint.setStrokeWidth(strokeWidth);
+		goal = new Rectangle(goalPaint, 4, 5, 5, 4);
 
 		// setting the initial position of the rectangle
-		rectangle = new Rectangle();
-		rectangle.setTop(3);
-		rectangle.setBottom(4);
-		rectangle.setLeft(3);
-		rectangle.setRight(4);
+		Paint rectPaint = new Paint();
+		// TODO adhoc - this color should be set by the level file
+		rectPaint.setColor(getResources().getColor(R.color.blue));
+		rectPaint.setStyle(Style.STROKE);
+		rectPaint.setStrokeWidth(strokeWidth);
+		rectangle = new Rectangle(rectPaint, 3, 4, 4, 3);
 
 		// setting the initial position of the grid
 		// TODO in ideal conditions this should be read from a file containing
@@ -190,40 +205,39 @@ public class Board extends SurfaceView implements GestureDetector.OnGestureListe
 		}
 	}
 
-	public void drawBoard() {
+	// returns the output onf the draw rectangle function
+	public boolean drawBoard() {
+		boolean ret;
 		// TODO surfaceHolder may be defined as a global variable
+		// System.out.println(matrix);
 		Canvas canvas = surfaceHolder.lockCanvas();
 		Paint paint = new Paint();
 
-		// clearing screen
-		paint.setColor(getResources().getColor(android.R.color.black));
-		paint.setStyle(Paint.Style.FILL_AND_STROKE);
-		canvas.drawRect(0, 0, 600, 600, paint);
+		// TODO get the colors from the level file
+		canvas.drawColor(getResources().getColor(R.color.white));
 
-		paint.setColor(getResources().getColor(android.R.color.holo_blue_dark));
+		paint.setColor(getResources().getColor(R.color.grey));
 
 		// drawing dots
+		// setting scale and offset
 		for (int i = 0; i < gridWidth; i++) {
 			for (int j = 0; j < gridHeight; j++) {
-				System.out.println(grid[i][j]);
 				if (grid[i][j]) {
-					canvas.drawCircle(100 * i, 100 * j, 5, paint);
+					canvas.drawCircle(left + i * hdis, top + vdis * j, dotRadius, paint);
 				}
 			}
 		}
 
 		// drawing the goal rectangle
-		paint.setColor(getResources().getColor(android.R.color.holo_green_light));
-		paint.setStyle(Paint.Style.STROKE);
-		canvas.drawRect(goal.getLeft() * 100, goal.getTop() * 100, goal.getRight() * 100, goal.getBottom() * 100, paint);
+		goal.draw(canvas, matrix);
 
 		// drawing the rectangle
-		paint.setColor(getResources().getColor(android.R.color.holo_orange_dark));
-		paint.setStyle(Paint.Style.STROKE);
-		canvas.drawRect(rectangle.getLeft() * 100, rectangle.getTop() * 100, rectangle.getRight() * 100, rectangle.getBottom() * 100, paint);
+		ret = rectangle.draw(canvas, matrix);
 
 		// completing drawing process
 		surfaceHolder.unlockCanvasAndPost(canvas);
+
+		return ret;
 	}
 
 	@Override
@@ -261,25 +275,22 @@ public class Board extends SurfaceView implements GestureDetector.OnGestureListe
 		float dx, dy;
 		dx = e2.getX() - e1.getX();
 		dy = e2.getY() - e1.getY();
-
+		// System.out.println(matrix);
 		if (Math.abs(dx) >= Math.abs(dy)) { // horizontal
 			if (dx < 0) { // left
 				move(3);
-				drawBoard();
 			} else { // right
 				move(1);
-				drawBoard();
 			}
 
 		} else { // vertical
 			if (dy < 0) {// up
 				move(0);
-				drawBoard();
 			} else {// down
 				move(2);
-				drawBoard();
 			}
 		}
+		new Thread(this).start();
 		return true;
 	}
 
@@ -291,23 +302,49 @@ public class Board extends SurfaceView implements GestureDetector.OnGestureListe
 	}
 
 	@Override
+	protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+		screenwidth = MeasureSpec.getSize(widthMeasureSpec);
+		screenheight = MeasureSpec.getSize(heightMeasureSpec);
+		// quarter of the screen will be used to display data;
+		top = ((float) screenheight) / 4 + paddingPercentage / 100 * screenheight;
+		left = paddingPercentage / 100 * screenwidth;
+		vdis = (screenheight - paddingPercentage / 100 * screenheight - top) / (gridHeight - 1);
+		hdis = (screenwidth - paddingPercentage / 100 * screenwidth * 2) / (gridWidth - 1);
+		// System.out.println("settings " + hdis + " ##  " + vdis + " ##  " +
+		// top + " ##  " + left);
+		setMeasuredDimension(screenwidth, screenheight);
+	}
+
+	@Override
 	public void surfaceCreated(SurfaceHolder holder) {
-		//setting screenHeight and screenWidht
-		screenHeight=
+		// setting screenHeight and screenWidht
 		surfaceHolder = holder;
+		matrix.postScale(hdis, vdis);
+		matrix.postTranslate(left, top);
 		drawBoard();
 	}
 
 	@Override
 	public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void surfaceDestroyed(SurfaceHolder holder) {
 		// TODO Auto-generated method stub
-		
+
+	}
+
+	@Override
+	public void run() {
+		while (drawBoard() == true) {
+			try {
+				Thread.sleep(10);
+			} catch (Exception e) {
+
+			}
+		}
 	}
 
 }
